@@ -2,9 +2,9 @@ import os
 import io
 import pandas as pd
 import numpy as np
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from PIL import Image
-from flask_cors import CORS 
+from flask_cors import CORS
 from collections import defaultdict
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -17,12 +17,12 @@ from tensorflow.keras.models import load_model
 app = Flask(__name__)
 CORS(app)
 
-# 🚨🚨🚨 중요: 사용자님의 로컬 PC 경로로 수정되었습니다. 🚨🚨🚨
-# 모든 AI 모델, 데이터 파일이 이 폴더 안에 있어야 합니다.
-ROOT_PATH = os.getcwd()
-# 🚨🚨🚨 새로 추가: 추천 아이템 이미지들이 저장된 폴더 경로 🚨🚨🚨
-# 이 폴더 안에 recommendation_metadata.csv에 등록된 모든 이미지가 있어야 합니다.
-#IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main") 
+# 🚨 수정: os.getcwd() 대신 현재 파일의 디렉토리를 ROOT_PATH로 설정하여 
+# 클라우드 배포(Render) 환경에서 파일 경로 문제를 해결합니다.
+ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
+
+# 이미지 경로는 ROOT_PATH를 기준으로 설정
+IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main")
 
 
 # 데이터 파일
@@ -33,7 +33,6 @@ EMBEDDING_FILE = os.path.join(ROOT_PATH, "all_embeddings.npy")
 CATEGORY_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_category.h5")
 COLOR_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_color.h5")
 STYLE_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_style.h5")
-# 🚨 새로 추가: 계절 모델 경로 🚨
 SEASON_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_season.h5")
 
 
@@ -41,13 +40,12 @@ SEASON_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_season.h5")
 CATEGORY_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_category_mapping.txt")
 COLOR_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_color_mapping.txt")
 STYLE_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_style_mapping.txt")
-# 🚨 새로 추가: 계절 매핑 경로 🚨
 SEASON_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_season_mapping.txt")
 
 
 # --- 2. 전역 변수 설정 및 모델 로드 ---
 global df, all_embeddings, mobile_net, category_model, color_model, style_model, season_model
-global category_map, color_map, style_map, season_map # season_map 추가
+global category_map, color_map, style_map, season_map 
 
 def load_all_assets():
     """서버 시작 시 모든 데이터 및 AI 모델을 로드합니다."""
@@ -61,42 +59,59 @@ def load_all_assets():
         df = pd.read_csv(CSV_FILE)
         all_embeddings = np.load(EMBEDDING_FILE)
         print(f"데이터 로드 완료. 샘플 수: {len(df)}, 임베딩 Shape: {all_embeddings.shape}")
+    except FileNotFoundError as e:
+        # 🚨 파일이 누락되었을 때의 상세 에러 보고
+        print(f"🚨 치명적인 오류: 필수 데이터 파일 로드 실패. 서버를 시작할 수 없습니다. (누락된 파일: {e.filename})")
+        print(f"ROOT_PATH: {ROOT_PATH}")
+        return False
     except Exception as e:
-        print(f"🚨 오류: 데이터 파일 로드 실패. 서버를 시작할 수 없습니다. ({e})")
+        print(f"🚨 기타 오류: 데이터 파일 로드 실패. 서버를 시작할 수 없습니다. ({e})")
         return False
         
     print("--- 특징 추출기 및 분류기 로드 시작 ---")
     try:
         # 1. MobileNetV2 특징 추출기 (임베딩 추출용)
+        # verbose=0 추가: 로드 시 메시지 최소화
         mobile_net = MobileNetV2(weights='imagenet', include_top=False, pooling='avg', input_shape=(224, 224, 3))
         
         # 2. 학습된 자동 분류기 4종 로드
         category_model = load_model(CATEGORY_MODEL_PATH)
         color_model = load_model(COLOR_MODEL_PATH)
         style_model = load_model(STYLE_MODEL_PATH)
-        # 🚨 계절 모델 로드 🚨
         season_model = load_model(SEASON_MODEL_PATH)
 
         # 3. 매핑 정보 로드
         def load_mapping(path):
-            with open(path, 'r') as f:
-                # 텍스트 파일에 저장된 문자열을 파이썬 딕셔너리로 변환
-                mapping_str = f.read().strip()
-                # eval 사용은 위험할 수 있으나, Colab에서 만든 파일이므로 가정
-                class_indices = eval(mapping_str)
-                # 인덱스(숫자)를 클래스(이름)로 변환하는 맵 생성
-                return {v: k for k, v in class_indices.items()}
+            try:
+                with open(path, 'r') as f:
+                    # 텍스트 파일에 저장된 문자열을 파이썬 딕셔너리로 변환
+                    mapping_str = f.read().strip()
+                    # eval 사용은 위험할 수 있으나, Colab에서 만든 파일이므로 가정
+                    class_indices = eval(mapping_str)
+                    # 인덱스(숫자)를 클래스(이름)로 변환하는 맵 생성
+                    return {v: k for k, v in class_indices.items()}
+            except FileNotFoundError as e:
+                # 🚨 매핑 파일이 누락되었을 때의 상세 에러 보고
+                raise e
+            except Exception as e:
+                # 🚨 매핑 파일 내용 오류 보고
+                raise Exception(f"매핑 파일 구문 분석 실패: {path} ({e})")
+
 
         category_map = load_mapping(CATEGORY_MAPPING_PATH)
         color_map = load_mapping(COLOR_MAPPING_PATH)
         style_map = load_mapping(STYLE_MAPPING_PATH)
-        # 🚨 계절 매핑 로드 🚨
         season_map = load_mapping(SEASON_MAPPING_PATH)
 
         print("모든 AI 모델 및 매핑 정보 로드 완료.")
         return True
+    except FileNotFoundError as e:
+        print(f"🚨 치명적인 오류: 필수 AI 모델/매핑 파일 로드 실패. 서버를 시작할 수 없습니다. (누락된 파일: {e.filename})")
+        print(f"ROOT_PATH: {ROOT_PATH}")
+        return False
     except Exception as e:
-        print(f"🚨 오류: AI 모델 로드 실패. 서버를 시작할 수 없습니다. 필요한 파일이 ROOT_PATH에 있는지 확인하세요. ({e})")
+        # 이 오류가 Render 로그에 나타날 것입니다. 
+        print(f"🚨 치명적인 오류: AI 모델 로드 실패 또는 기타 오류. 서버를 시작할 수 없습니다. ({e})")
         return False
 
 # --- 3. 핵심 로직 함수 (Notebook 로직 재사용) ---
@@ -146,7 +161,7 @@ def get_outfit_pair_score(query_attrs, target_idx):
     attribute_score = (
         W_COLOR * color_score +
         W_STYLE * style_score +
-        W_SEASON * season_score 
+        W_SEASON * season_score
     )
     
     return attribute_score, color_score, style_score, season_score
@@ -157,6 +172,7 @@ def extract_embedding(img_pil):
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0)
     x = preprocess_input(x)
+    # predict 함수에 verbose=0 추가 (로그 줄이기)
     embedding = mobile_net.predict(x, verbose=0)
     return embedding[0]
 
@@ -190,7 +206,7 @@ def predict_attributes(img_pil):
     results['style'] = style_map[sty_index]
     confidence['style'] = float(pred_sty[sty_index])
     
-    # 🚨 수정 4: 계절 예측을 모델 기반으로 변경 🚨
+    # 계절 예측
     pred_sea = season_model.predict(x, verbose=0)[0]
     sea_index = np.argmax(pred_sea)
     results['season'] = season_map[sea_index]
@@ -252,19 +268,17 @@ def recommend_outfit():
         if not candidate_indices:
              # 후보 아이템이 없으면 빈 목록 반환 및 경고 처리
              top_k = []
-             # 기존 정확도 기반 경고가 없으면 DB 관련 경고를 우선 사용합니다.
-             # confidence 딕셔너리에 'season'이 추가되었으므로 min() 사용 가능
-             min_confidence = min(confidence.values()) 
+             min_confidence = min(confidence.values())
              guidance = guidance_category or f"AI 분석 정확도가 낮습니다 (최저 {(min_confidence*100):.0f}%). 옷이 잘 보이도록 다른 각도/배경에서 다시 시도해 보세요."
         
              return jsonify({
-                "status": "success",
-                "query_attributes": query_attrs,
-                "confidence": confidence,
-                "guidance": guidance, 
-                "recommendations": top_k
-            })
-            
+                 "status": "success",
+                 "query_attributes": query_attrs,
+                 "confidence": confidence,
+                 "guidance": guidance,
+                 "recommendations": top_k
+             })
+             
         scores = {}
         
         # 모든 후보 아이템과 점수 계산
@@ -316,12 +330,18 @@ def recommend_outfit():
 
     except Exception as e:
         # Error states
+        # Render 로그에 오류 메시지가 더 자세히 기록될 것입니다.
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"--- Fatal Error in /recommend ---: {e}") 
+        print(error_trace)
         return jsonify({
-            "error": f"Internal Server Error: {str(e)}", 
+            "error": f"Internal Server Error: {str(e)}",
             "message": "서버 내부 처리 중 문제가 발생했습니다. 관리자에게 문의하세요.",
             "error_type": "MODEL_INFERENCE_FAILED"
         }), 500
 
+# 이미지 서빙 엔드포인트: 추천 결과 이미지를 프론트엔드에 전달합니다.
 @app.route('/image/<filename>')
 def serve_image(filename):
     """
@@ -337,7 +357,6 @@ def serve_image(filename):
 
 @app.route('/')
 def home():
-    from flask import send_file
     # render_template을 사용하려면 index.html을 'templates' 폴더에 넣어야 합니다.
     # 가장 간단하게는, 루트에 있는 index.html을 바로 보냅니다.
     return send_file('index.html')
@@ -346,5 +365,5 @@ if __name__ == '__main__':
     # 서버 시작 전에 모든 AI 모델과 데이터를 로드
     if load_all_assets():
         print("✅ 모든 에셋 로드 완료. 서버를 시작합니다.")
-        # 배포 시에는 host와 port를 변경하고 debug=False로 설정해야 합니다.
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        # 배포 시에는 host='0.0.0.0'이 필수입니다.
+        app.run(host='0.0.0.0', port=5000) # debug=True는 배포 시에는 제거합니다.
