@@ -337,7 +337,10 @@ def serve_image(filename):
 
 @app.route('/')
 def home():
-    return 'Outfit Recommender Backend API is running. Use the /recommend POST endpoint.'
+    from flask import send_file
+    # render_template을 사용하려면 index.html을 'templates' 폴더에 넣어야 합니다.
+    # 가장 간단하게는, 루트에 있는 index.html을 바로 보냅니다.
+    return send_file('index.html')
 
 if __name__ == '__main__':
     # 서버 시작 전에 모든 AI 모델과 데이터를 로드
