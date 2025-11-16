@@ -1,0 +1,1 @@
+{'beige': 0, 'black': 1, 'blackwhite': 2, 'blue': 3, 'brown': 4, 'camo': 5, 'charcoal': 6, 'darkgray': 7, 'gray': 8, 'green': 9, 'khaki': 10, 'navy': 11, 'olive': 12, 'pink': 13, 'purple': 14, 'red': 15, 'white': 16, 'yellow': 17}

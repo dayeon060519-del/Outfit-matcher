@@ -1,0 +1,1 @@
+{'casual': 0, 'casual ': 1, 'feminine': 2, 'hoddie': 3, 'jacket': 4, 'jeans': 5, 'minimal': 6, 'neat': 7, 'pants': 8, 'shirt': 9, 'sporty': 10, 'street': 11}

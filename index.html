@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>👕 코디 추천 AI</title>
+    <style>
+        /* ==========================================================
+           CSS CODE START (스타일)
+           ========================================================== */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #4a4a8a;
+            margin-bottom: 30px;
+        }
+
+        /* --- 파일 업로드 섹션 --- */
+        #upload-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            background-color: #fcfcfc;
+        }
+        #file-input {
+            display: none;
+        }
+        #file-label {
+            background-color: #5c67f2;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+            transition: background-color 0.3s;
+            margin-bottom: 15px;
+        }
+        #file-label:hover {
+            background-color: #4a54e1;
+        }
+        #preview-img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            margin-top: 15px;
+            display: none;
+        }
+
+        /* --- 결과 섹션 --- */
+        #loading {
+            text-align: center;
+            font-size: 1.2em;
+            color: #5c67f2;
+            margin-top: 20px;
+            display: none;
+        }
+        #results-section {
+            margin-top: 40px;
+            border-top: 2px solid #eee;
+            padding-top: 30px;
+        }
+
+        /* --- 예측 속성 박스 --- */
+        #query-attributes {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+            padding: 15px;
+            background-color: #e8eaf6;
+            border-radius: 8px;
+        }
+        .attr-box {
+            padding: 10px 20px;
+            border-radius: 6px;
+            background-color: white;
+            margin: 10px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            min-width: 150px;
+        }
+        .attr-box h3 {
+            margin-top: 0;
+            margin-bottom: 5px;
+            font-size: 1.2em;
+            color: #3f51b5;
+        }
+        .attr-box p {
+            margin: 0;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .confidence {
+            font-size: 0.8em;
+            color: #9e9e9e;
+            margin-top: 3px;
+        }
+        .warning-text {
+            color: #ff5722;
+            font-weight: bold;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        /* --- 추천 목록 --- */
+        #recommendation-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .recommendation-card {
+            background: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            width: 280px;
+            transition: transform 0.3s;
+        }
+        .recommendation-card:hover {
+            transform: translateY(-5px);
+        }
+        .rec-image {
+            width: 100%;
+            height: 280px;
+            object-fit: cover;
+            border-bottom: 1px solid #eee;
+        }
+        .rec-info {
+            padding: 15px;
+        }
+        .rec-info h3 {
+            margin-top: 0;
+            color: #3f51b5;
+            font-size: 1.1em;
+        }
+        /* 점수 막대 */
+        .score-bar {
+            background-color: #eee;
+            border-radius: 5px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        .score-fill {
+            height: 10px;
+            background-color: #4CAF50; /* Green for score */
+        }
+        .rec-details {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        /* 색상 스와치 */
+        .color-swatch {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 5px;
+            border: 1px solid #ccc;
+            vertical-align: middle;
+        }
+        /* ==========================================================
+           CSS CODE END
+           ========================================================== */
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>👕 AI 코디 추천 서비스</h1>
+        
+        <div id="upload-section">
+            <input type="file" id="file-input" accept="image/*">
+            <label for="file-input" id="file-label">👔 옷 이미지 업로드</label>
+            <p id="file-name-display"></p>
+            <img id="preview-img" src="#" alt="업로드 이미지 미리보기">
+            <button onclick="recommendOutfit()" id="recommend-button" style="display:none; margin-top: 20px; padding: 10px 30px; background-color: #f44336; color: white; border: none; border-radius: 5px; cursor: pointer;">✨ 코디 추천 시작</button>
+        </div>
+
+        <div id="loading">잠시만 기다려주세요... AI가 분석 중입니다.</div>
+
+        <div id="results-section" style="display:none;">
+            <h2>💡 AI 분석 결과</h2>
+            <div id="query-attributes">
+                </div>
+
+            <p id="guidance-message" class="warning-text"></p>
+
+            <hr>
+
+            <h2>✨ 추천 코디 목록</h2>
+            <div id="recommendation-list">
+                </div>
+        </div>
+
+        <div id="error-message" class="warning-text" style="display:none; color: red;"></div>
+    </div>
+
+    <script>
+        /* ==========================================================
+           JAVASCRIPT CODE START (로직 및 API 통신)
+           ========================================================== */
+        
+        // 백엔드 서버 주소 설정 (app.py의 host='0.0.0.0', port=5000 기준)
+        const API_BASE_URL = 'http://localhost:5000';
+        
+        const fileInput = document.getElementById('file-input');
+        const previewImg = document.getElementById('preview-img');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const recommendButton = document.getElementById('recommend-button');
+
+        // 색상 이름에 해당하는 HEX 코드를 반환하는 함수 (색상 스와치용)
+        function getColorHex(colorName) {
+            const colors = {
+                'Black': '#000000', 'White': '#F5F5F5', 'Red': '#E53935', 'Blue': '#1E88E5',
+                'Green': '#4CAF50', 'Light Gray': '#BDBDBD', 'Dark Gray': '#616161', 
+                'Beige': '#F5F5DC', 'Brown': '#795548', 'Yellow': '#FFEB3B', 
+                'Pink': '#F48FB1', 'Orange': '#FF9800', 'Purple': '#9C27B0',
+                'Mint': '#4DB6AC', 'Navy': '#1A237E', 'Sky Blue': '#81D4FA',
+                'Khaki': '#BDB76B'
+            };
+            return colors[colorName] || '#CCCCCC'; // 맵에 없는 색상은 기본 회색
+        }
+        
+        // 파일 선택 시 미리보기 및 버튼 활성화
+        fileInput.addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewImg.style.display = 'block';
+                    fileNameDisplay.textContent = `선택된 파일: ${file.name}`;
+                    recommendButton.style.display = 'block';
+                    // 이전 결과 초기화
+                    document.getElementById('results-section').style.display = 'none';
+                    document.getElementById('error-message').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewImg.style.display = 'none';
+                previewImg.src = '#';
+                fileNameDisplay.textContent = '';
+                recommendButton.style.display = 'none';
+            }
+        });
+
+        // 추천 버튼 클릭 시 실행
+        async function recommendOutfit() {
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('이미지를 먼저 선택해주세요.');
+                return;
+            }
+
+            // UI 상태 변경
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results-section').style.display = 'none';
+            document.getElementById('error-message').style.display = 'none';
+            recommendButton.disabled = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE_URL}/recommend`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResults(data);
+                } else {
+                    displayError(data.message || `API 호출 실패: ${response.status} ${response.statusText}`);
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+                displayError('서버에 연결할 수 없거나 예기치 않은 오류가 발생했습니다. (서버가 실행 중인지 확인하세요.)');
+            } finally {
+                // UI 상태 복구
+                document.getElementById('loading').style.display = 'none';
+                recommendButton.disabled = false;
+            }
+        }
+        
+        // 결과 표시 함수
+        function displayResults(data) {
+            const resultsSection = document.getElementById('results-section');
+            const attrContainer = document.getElementById('query-attributes');
+            const recList = document.getElementById('recommendation-list');
+            const guidanceMessage = document.getElementById('guidance-message');
+
+            attrContainer.innerHTML = '';
+            recList.innerHTML = '';
+            
+            // 1. AI 분석 결과 표시 (사용자가 올린 옷의 속성)
+            const attrs = data.query_attributes;
+            const confidence = data.confidence;
+            
+            let minConfidence = 1.0; 
+            
+            // 카테고리, 색상, 스타일, 계절 순서로 표시
+            ['category', 'color', 'style', 'season'].forEach(key => {
+                const confValue = confidence[key];
+                
+                // 계절은 서버에서 1.0으로 처리했거나, nan일 경우 1.0으로 간주하여 최소값 계산에 참여
+                const actualConfidence = isNaN(confValue) ? 1.0 : confValue; 
+                
+                if (actualConfidence < minConfidence) {
+                    minConfidence = actualConfidence;
+                }
+
+                const box = document.createElement('div');
+                box.className = 'attr-box';
+                // 개별 정확도 제거 
+                box.innerHTML = `
+                    <h3>${getAttrLabel(key)}</h3>
+                    <p>${attrs[key]}</p>
+                `;
+                attrContainer.appendChild(box);
+            });
+
+            // 종합 분석 정확도 박스 추가 
+            const overallBox = document.createElement('div');
+            overallBox.className = 'attr-box';
+            overallBox.style.backgroundColor = '#fff8e1'; /* 연한 노란색 배경 */
+            overallBox.style.border = '2px solid #ffb300';
+            overallBox.innerHTML = `
+                <h3>종합 분석 정확도</h3>
+                <p style="color: #ffb300;">${(minConfidence * 100).toFixed(1)}%</p>
+                <div class="confidence">(최저 속성 신뢰도 기준)</div>
+            `;
+            attrContainer.appendChild(overallBox);
+
+            // 2. 가이드 메시지 표시
+            guidanceMessage.textContent = data.guidance || '';
+
+            // 3. 추천 코디 목록 표시
+            data.recommendations.forEach(rec => {
+                const card = document.createElement('div');
+                card.className = 'recommendation-card';
+
+                const imageUrl = `${API_BASE_URL}/image/${rec.filename}`;
+                const colorHex = getColorHex(rec.color); // 추천 아이템의 색상 HEX 코드
+
+                const maxPossibleScore = 1.15; 
+                const scorePercent = (rec.total_score / maxPossibleScore) * 100;
+
+                // 백엔드에서 전달된 season과 style을 사용
+                const recommendedCategory = rec.category || '정보 없음'; 
+                const recommendedStyle = rec.style || '정보 없음'; 
+                const recommendedSeason = rec.season || '정보 없음'; 
+                const recommendedColor = rec.color || '정보 없음';
+
+                card.innerHTML = `
+                    <img src="${imageUrl}" alt="${rec.filename}" class="rec-image" onerror="this.onerror=null;this.src='https://via.placeholder.com/280x280.png?text=Image+Not+Found';" loading="lazy">
+                    <div class="rec-info">
+                        <h3>⭐ 추천 점수: ${rec.total_score.toFixed(3)}</h3>
+                        <div class="score-bar"><div class="score-fill" style="width: ${scorePercent.toFixed(0)}%"></div></div>
+                        <p style="font-size: 0.9em; margin-top: 5px;">
+                            카테고리: <strong>${recommendedCategory}</strong><br>
+                            스타일: <strong>${recommendedStyle}</strong><br>
+                            계절: <strong>${recommendedSeason}</strong><br>
+                            색상: 
+                            <span class="color-swatch" style="background-color: ${colorHex};"></span>
+                            <strong>${recommendedColor}</strong> 
+                        </p>
+                        <div class="rec-details">
+                            <p>색상 조합: ${(rec.details.color_score * 100).toFixed(0)}점</p>
+                            <p>스타일 일치: ${(rec.details.style_score * 100).toFixed(0)}점</p>
+                            <p>시각적 유사도: ${(rec.details.sim_score * 100).toFixed(0)}점</p>
+                            <p>계절 일치: ${(rec.details.season_score * 100).toFixed(0)}점</p> 
+                        </div>
+                    </div>
+                `;
+                recList.appendChild(card);
+            });
+
+            resultsSection.style.display = 'block';
+        }
+
+        // 에러 메시지 표시 함수
+        function displayError(message) {
+            const errorElement = document.getElementById('error-message');
+            errorElement.textContent = `🚨 오류 발생: ${message}`;
+            errorElement.style.display = 'block';
+        }
+
+        // 속성 키를 한글 라벨로 변환
+        function getAttrLabel(key) {
+            switch (key) {
+                case 'category': return '카테고리';
+                case 'color': return '주요 색상';
+                case 'style': return '스타일';
+                case 'season': return '계절';
+                default: return key;
+            }
+        }
+        /* ==========================================================
+           JAVASCRIPT CODE END
+           ========================================================== */
+    </script>
+
+</body>
+</html>
