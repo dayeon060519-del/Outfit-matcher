@@ -19,7 +19,7 @@ CORS(app)
 
 # 🚨🚨🚨 중요: 사용자님의 로컬 PC 경로로 수정되었습니다. 🚨🚨🚨
 # 모든 AI 모델, 데이터 파일이 이 폴더 안에 있어야 합니다.
-ROOT_PATH = "os.getcwd()" 
+ROOT_PATH = os.getcwd()
 # 🚨🚨🚨 새로 추가: 추천 아이템 이미지들이 저장된 폴더 경로 🚨🚨🚨
 # 이 폴더 안에 recommendation_metadata.csv에 등록된 모든 이미지가 있어야 합니다.
 #IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main") 
