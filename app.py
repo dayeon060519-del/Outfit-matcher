@@ -18,7 +18,8 @@ from tensorflow.keras.models import load_model
 app = Flask(__name__)
 CORS(app)
 
-# 🚨🚨🚨 중요: Render 서버에 맞게 절대 경로 대신 현재 파일의 디렉토리로 ROOT_PATH 설정 🚨🚨🚨
+# 🚨🚨🚨 중요 수정: Render 서버 환경에 맞게 현재 파일의 디렉토리로 ROOT_PATH 설정 🚨🚨🚨
+# 이 ROOT_PATH가 Render에서는 /opt/render/project/src/ 로 지정됩니다.
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 # 🚨🚨🚨 새로 추가: 추천 아이템 이미지들이 저장된 폴더 경로 🚨🚨🚨
@@ -28,13 +29,20 @@ IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main")
 CSV_FILE = os.path.join(ROOT_PATH, "recommendation_metadata.csv")
 EMBEDDING_FILE = os.path.join(ROOT_PATH, "all_embeddings.npy")
 
-# 모델 파일 (사용자님 프로젝트에 맞춰 경로 수정 필요)
-# Render에 업로드한 경로를 기준으로 설정해 주세요.
+# 모델 파일
+# **핵심 수정:** 프로젝트의 루트 폴더에 있다면 ROOT_PATH와 파일명을 합쳐서 사용합니다.
 CATEGORY_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_category.h5")
 COLOR_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_color.h5")
 STYLE_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_style.h5")
 SEASON_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_season.h5")
 FEATURE_EXTRACTOR_PATH = os.path.join(ROOT_PATH, "MobileNetV2.h5")
+
+# --- 2. 전역 변수 초기화 (NameError 방지) ---
+# ... (이하 동일)
+# ... (이하 동일)
+# ... (이하 동일)
+# ... (이하 동일)
+# ... (이하 동일)
 
 # --- 2. 전역 변수 초기화 (NameError 방지) ---
 # 이 변수들이 Flask 라우트에서 사용될 수 있도록 None으로 초기화합니다.
@@ -80,7 +88,6 @@ def load_all_assets():
         
         # 4. 특징 추출기 로드 (MobileNetV2)
         # MobileNetV2.h5를 로드하거나, weights='imagenet'으로 MobileNetV2 기본 모델 사용
-        # 여기서는 고객님의 MobileNetV2.h5 경로를 사용합니다.
         feature_extractor = load_model(FEATURE_EXTRACTOR_PATH)
         
         # 5. 모델 라벨 맵 (선택 사항: 필요한 경우 로드)
@@ -91,7 +98,6 @@ def load_all_assets():
 
     except Exception as e:
         print(f"🚨 Fatal Error: 모델 또는 데이터 로드 실패. {e}")
-        # Render에서 이 오류가 발생하면 서버가 즉시 종료되므로 메모리 부족 문제가 아니라는 것을 알 수 있습니다.
         return False
 
 # 서버 시작 시 로드 함수 실행
@@ -218,6 +224,10 @@ def recommend():
         processed_img = preprocess_query_image(image_bytes)
         
         # 2. 특징 추출 (Feature Extraction)
+        # NameError를 방지하기 위해 전역 변수 feature_extractor가 None인지 확인
+        if feature_extractor is None:
+             raise ValueError("Feature extractor model is not loaded.")
+        
         query_vector = feature_extractor.predict(processed_img)
         
         # 3. 속성 예측 (Attribute Prediction)
@@ -243,11 +253,9 @@ def recommend():
     except Exception as e:
         # Error states
         print(f"Fatal Error in /recommend ---: {str(e)}")
-        # 🚨 여기서 NameError가 발생한다면, load_all_assets()가 메모리 부족으로 인해 실패했거나, 
-        # 혹은 변수 설정이 잘못된 것입니다.
         return jsonify({
             "error": f"Internal Server Error: {str(e)}", 
-            "message": "서버 내부 처리 중 문제가 발생했습니다. (모델 로드 실패 가능성)",
+            "message": "서버 내부 처리 중 문제가 발생했습니다. (파일 경로 또는 메모리 오류 가능성)",
             "error_type": "MODEL_INFERENCE_FAILED"
         }), 500
 
