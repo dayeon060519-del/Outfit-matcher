@@ -7,7 +7,8 @@ from PIL import Image
 from flask_cors import CORS 
 from collections import defaultdict
 from sklearn.metrics.pairwise import cosine_similarity
-import json
+# JSON 임포트는 이미 존재하므로 제거합니다.
+# import json 
 
 # TensorFlow/Keras 라이브러리 (AI 모델 로드 및 이미지 처리)
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
@@ -18,34 +19,26 @@ from tensorflow.keras.models import load_model
 app = Flask(__name__)
 CORS(app)
 
-# 🚨🚨🚨 중요 수정: Render 서버 환경에 맞게 현재 파일의 디렉토리로 ROOT_PATH 설정 🚨🚨🚨
-# 이 ROOT_PATH가 Render에서는 /opt/render/project/src/ 로 지정됩니다.
+# 🚨🚨🚨 핵심 수정: Render는 /opt/render/project/src/ 경로에서 실행되므로, 
+# os.path.dirname(__file__) 을 사용하면 이 경로가 됩니다.
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# 🚨🚨🚨 새로 추가: 추천 아이템 이미지들이 저장된 폴더 경로 🚨🚨🚨
+# 이미지 폴더는 PROJECT_ROOT/dataset_main 으로 확실하게 지정
 IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main") 
 
-# 데이터 파일
+# 데이터 및 모델 파일 경로를 ROOT_PATH에 연결합니다.
 CSV_FILE = os.path.join(ROOT_PATH, "recommendation_metadata.csv")
 EMBEDDING_FILE = os.path.join(ROOT_PATH, "all_embeddings.npy")
 
-# 모델 파일
-# **핵심 수정:** 프로젝트의 루트 폴더에 있다면 ROOT_PATH와 파일명을 합쳐서 사용합니다.
+# 모델 파일 경로: 파일이 모두 ROOT_PATH에 있다고 가정합니다.
 CATEGORY_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_category.h5")
 COLOR_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_color.h5")
 STYLE_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_style.h5")
 SEASON_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_season.h5")
 FEATURE_EXTRACTOR_PATH = os.path.join(ROOT_PATH, "MobileNetV2.h5")
 
-# --- 2. 전역 변수 초기화 (NameError 방지) ---
-# ... (이하 동일)
-# ... (이하 동일)
-# ... (이하 동일)
-# ... (이하 동일)
-# ... (이하 동일)
 
 # --- 2. 전역 변수 초기화 (NameError 방지) ---
-# 이 변수들이 Flask 라우트에서 사용될 수 있도록 None으로 초기화합니다.
 category_model = None
 color_model = None
 style_model = None
@@ -56,8 +49,6 @@ all_embeddings = None
 LABEL_MAPS = None
 
 # --- 3. 상수 정의 ---
-# 실제 모델 학습 시 사용된 클래스 이름 리스트로 대체해야 합니다.
-# (이전에 제공된 더미 데이터 사용)
 CLASSES = {
     'category': ['Top', 'Bottom', 'Outerwear', 'Dress', 'Shoes', 'Accessory'],
     'color': ['Black', 'White', 'Red', 'Blue', 'Green', 'Light Gray', 'Dark Gray', 'Beige', 'Brown', 'Yellow', 'Pink', 'Orange', 'Purple', 'Mint', 'Navy', 'Sky Blue', 'Khaki'],
@@ -80,24 +71,25 @@ def load_all_assets():
         all_embeddings = np.load(EMBEDDING_FILE)
         print(f"임베딩 데이터 로드 완료. 형태: {all_embeddings.shape}")
         
-        # 3. Keras 모델 로드
+        # 3. Keras 모델 로드 (파일 경로를 확인하기 위해 로드 순서를 바꿉니다.)
+        print(f"MobileNetV2 모델 로드 시도: {FEATURE_EXTRACTOR_PATH}")
+        feature_extractor = load_model(FEATURE_EXTRACTOR_PATH)
+        print("MobileNetV2 로드 성공.")
+        
         category_model = load_model(CATEGORY_MODEL_PATH)
         color_model = load_model(COLOR_MODEL_PATH)
         style_model = load_model(STYLE_MODEL_PATH)
         season_model = load_model(SEASON_MODEL_PATH)
         
-        # 4. 특징 추출기 로드 (MobileNetV2)
-        # MobileNetV2.h5를 로드하거나, weights='imagenet'으로 MobileNetV2 기본 모델 사용
-        feature_extractor = load_model(FEATURE_EXTRACTOR_PATH)
-        
-        # 5. 모델 라벨 맵 (선택 사항: 필요한 경우 로드)
-        LABEL_MAPS = CLASSES # 모델의 출력 순서와 라벨이 일치한다고 가정합니다.
+        # 4. 모델 라벨 맵
+        LABEL_MAPS = CLASSES
 
         print("✅ 모든 에셋 로드 완료. 서버를 시작합니다.")
         return True
 
     except Exception as e:
         print(f"🚨 Fatal Error: 모델 또는 데이터 로드 실패. {e}")
+        # 이 함수가 False를 반환하면 서버가 죽지는 않지만, recommend 라우트에서 오류가 발생함
         return False
 
 # 서버 시작 시 로드 함수 실행
@@ -118,6 +110,7 @@ def predict_attributes(processed_img):
     """ 전처리된 이미지 배열을 기반으로 4가지 속성 예측 및 가장 높은 확률 반환 """
     
     # NameError 방지를 위해 로드된 모델 객체를 사용하기 전에 다시 한 번 검증
+    # feature_extractor가 로드되지 않았다면 나머지 모델도 로드되지 않았을 가능성이 높습니다.
     if category_model is None:
         raise ValueError("AI 모델이 로드되지 않았습니다.")
     
@@ -151,11 +144,10 @@ def recommend_outfits(query_vector, query_attrs, df, k=10):
     df['similarity_score'] = similarities
     
     # 3. 속성 매칭 점수 계산
-    # 카테고리/색상/스타일/계절이 일치하면 추가 점수 부여
     df['attribute_score'] = 0.0
     
     # 각 속성별 일치 점수
-    attr_scores = defaultdict(float)
+    # attr_scores = defaultdict(float) # 사용되지 않아 제거
 
     # 색상 일치 점수 (0.4점)
     df.loc[df['color'] == query_attrs['color'], 'attribute_score'] += 0.4
@@ -164,8 +156,6 @@ def recommend_outfits(query_vector, query_attrs, df, k=10):
     # 스타일 일치 점수 (0.25점)
     df.loc[df['style'] == query_attrs['style'], 'attribute_score'] += 0.25
     df.loc[df['style'] == query_attrs['style'], 'style_score'] = 0.25
-    
-    # 시각적 유사도 점수는 이미 similarity_score에 저장됨 (최대 0.5)
     
     # 계절 일치 점수 (0.1점)
     df.loc[df['season'] == query_attrs['season'], 'attribute_score'] += 0.1
@@ -219,15 +209,15 @@ def recommend():
         return jsonify({"error": "No selected file"}), 400
     
     try:
+        # 🚨 여기서 모델 로드 실패 여부를 최종 확인합니다.
+        if feature_extractor is None:
+             raise ValueError("Feature extractor model is not loaded (Load Assets function failed).")
+
         # 1. 이미지 전처리
         image_bytes = file.read()
         processed_img = preprocess_query_image(image_bytes)
         
         # 2. 특징 추출 (Feature Extraction)
-        # NameError를 방지하기 위해 전역 변수 feature_extractor가 None인지 확인
-        if feature_extractor is None:
-             raise ValueError("Feature extractor model is not loaded.")
-        
         query_vector = feature_extractor.predict(processed_img)
         
         # 3. 속성 예측 (Attribute Prediction)
