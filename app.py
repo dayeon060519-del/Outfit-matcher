@@ -2,11 +2,12 @@ import os
 import io
 import pandas as pd
 import numpy as np
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
-from flask_cors import CORS
+from flask_cors import CORS 
 from collections import defaultdict
 from sklearn.metrics.pairwise import cosine_similarity
+import json
 
 # TensorFlow/Keras 라이브러리 (AI 모델 로드 및 이미지 처리)
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
@@ -17,307 +18,218 @@ from tensorflow.keras.models import load_model
 app = Flask(__name__)
 CORS(app)
 
-# 🚨 수정: os.getcwd() 대신 현재 파일의 디렉토리를 ROOT_PATH로 설정하여 
-# 클라우드 배포(Render) 환경에서 파일 경로 문제를 해결합니다.
+# 🚨🚨🚨 중요: Render 서버에 맞게 절대 경로 대신 현재 파일의 디렉토리로 ROOT_PATH 설정 🚨🚨🚨
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# 이미지 경로는 ROOT_PATH를 기준으로 설정
-IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main")
-
+# 🚨🚨🚨 새로 추가: 추천 아이템 이미지들이 저장된 폴더 경로 🚨🚨🚨
+IMAGE_DIR = os.path.join(ROOT_PATH, "dataset_main") 
 
 # 데이터 파일
 CSV_FILE = os.path.join(ROOT_PATH, "recommendation_metadata.csv")
 EMBEDDING_FILE = os.path.join(ROOT_PATH, "all_embeddings.npy")
 
-# 모델 파일
+# 모델 파일 (사용자님 프로젝트에 맞춰 경로 수정 필요)
+# Render에 업로드한 경로를 기준으로 설정해 주세요.
 CATEGORY_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_category.h5")
 COLOR_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_color.h5")
 STYLE_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_style.h5")
 SEASON_MODEL_PATH = os.path.join(ROOT_PATH, "classifier_season.h5")
+FEATURE_EXTRACTOR_PATH = os.path.join(ROOT_PATH, "MobileNetV2.h5")
 
+# --- 2. 전역 변수 초기화 (NameError 방지) ---
+# 이 변수들이 Flask 라우트에서 사용될 수 있도록 None으로 초기화합니다.
+category_model = None
+color_model = None
+style_model = None
+season_model = None
+feature_extractor = None 
+df_metadata = None
+all_embeddings = None
+LABEL_MAPS = None
 
-# 매핑 파일 (AI 예측 결과 숫자를 실제 이름으로 변환하기 위해 필요)
-CATEGORY_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_category_mapping.txt")
-COLOR_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_color_mapping.txt")
-STYLE_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_style_mapping.txt")
-SEASON_MAPPING_PATH = os.path.join(ROOT_PATH, "classifier_season_mapping.txt")
+# --- 3. 상수 정의 ---
+# 실제 모델 학습 시 사용된 클래스 이름 리스트로 대체해야 합니다.
+# (이전에 제공된 더미 데이터 사용)
+CLASSES = {
+    'category': ['Top', 'Bottom', 'Outerwear', 'Dress', 'Shoes', 'Accessory'],
+    'color': ['Black', 'White', 'Red', 'Blue', 'Green', 'Light Gray', 'Dark Gray', 'Beige', 'Brown', 'Yellow', 'Pink', 'Orange', 'Purple', 'Mint', 'Navy', 'Sky Blue', 'Khaki'],
+    'style': ['Casual', 'Street', 'Business', 'Formal', 'Sporty', 'Romantic', 'Vintage'],
+    'season': ['Spring', 'Summer', 'Fall', 'Winter']
+}
 
-
-# --- 2. 전역 변수 설정 및 모델 로드 ---
-global df, all_embeddings, mobile_net, category_model, color_model, style_model, season_model
-global category_map, color_map, style_map, season_map 
-
+# --- 4. 모델 및 데이터 로드 함수 (서버 시작 시 단 1회 실행) ---
 def load_all_assets():
-    """서버 시작 시 모든 데이터 및 AI 모델을 로드합니다."""
+    """ 모든 AI 모델과 데이터를 메모리에 로드 """
+    print(f"ROOT_PATH: {ROOT_PATH}")
+    global category_model, color_model, style_model, season_model, feature_extractor, df_metadata, all_embeddings, LABEL_MAPS
     
-    global df, all_embeddings, mobile_net, category_model, color_model, style_model, season_model
-    global category_map, color_map, style_map, season_map
-    
-    print("--- 데이터셋 로드 시작 ---")
     try:
-        # 이 부분에서 ROOT_PATH를 사용하여 파일을 찾습니다.
-        df = pd.read_csv(CSV_FILE)
+        # 1. 메타데이터 로드
+        df_metadata = pd.read_csv(CSV_FILE)
+        print(f"메타데이터 로드 완료. 총 {len(df_metadata)}개 아이템.")
+
+        # 2. 임베딩 데이터 로드
         all_embeddings = np.load(EMBEDDING_FILE)
-        print(f"데이터 로드 완료. 샘플 수: {len(df)}, 임베딩 Shape: {all_embeddings.shape}")
-    except FileNotFoundError as e:
-        # 🚨 파일이 누락되었을 때의 상세 에러 보고
-        print(f"🚨 치명적인 오류: 필수 데이터 파일 로드 실패. 서버를 시작할 수 없습니다. (누락된 파일: {e.filename})")
-        print(f"ROOT_PATH: {ROOT_PATH}")
-        return False
-    except Exception as e:
-        print(f"🚨 기타 오류: 데이터 파일 로드 실패. 서버를 시작할 수 없습니다. ({e})")
-        return False
+        print(f"임베딩 데이터 로드 완료. 형태: {all_embeddings.shape}")
         
-    print("--- 특징 추출기 및 분류기 로드 시작 ---")
-    try:
-        # 1. MobileNetV2 특징 추출기 (임베딩 추출용)
-        # verbose=0 추가: 로드 시 메시지 최소화
-        mobile_net = MobileNetV2(weights='imagenet', include_top=False, pooling='avg', input_shape=(224, 224, 3))
-        
-        # 2. 학습된 자동 분류기 4종 로드
+        # 3. Keras 모델 로드
         category_model = load_model(CATEGORY_MODEL_PATH)
         color_model = load_model(COLOR_MODEL_PATH)
         style_model = load_model(STYLE_MODEL_PATH)
         season_model = load_model(SEASON_MODEL_PATH)
+        
+        # 4. 특징 추출기 로드 (MobileNetV2)
+        # MobileNetV2.h5를 로드하거나, weights='imagenet'으로 MobileNetV2 기본 모델 사용
+        # 여기서는 고객님의 MobileNetV2.h5 경로를 사용합니다.
+        feature_extractor = load_model(FEATURE_EXTRACTOR_PATH)
+        
+        # 5. 모델 라벨 맵 (선택 사항: 필요한 경우 로드)
+        LABEL_MAPS = CLASSES # 모델의 출력 순서와 라벨이 일치한다고 가정합니다.
 
-        # 3. 매핑 정보 로드
-        def load_mapping(path):
-            try:
-                with open(path, 'r') as f:
-                    # 텍스트 파일에 저장된 문자열을 파이썬 딕셔너리로 변환
-                    mapping_str = f.read().strip()
-                    # eval 사용은 위험할 수 있으나, Colab에서 만든 파일이므로 가정
-                    class_indices = eval(mapping_str)
-                    # 인덱스(숫자)를 클래스(이름)로 변환하는 맵 생성
-                    return {v: k for k, v in class_indices.items()}
-            except FileNotFoundError as e:
-                # 🚨 매핑 파일이 누락되었을 때의 상세 에러 보고
-                raise e
-            except Exception as e:
-                # 🚨 매핑 파일 내용 오류 보고
-                raise Exception(f"매핑 파일 구문 분석 실패: {path} ({e})")
-
-
-        category_map = load_mapping(CATEGORY_MAPPING_PATH)
-        color_map = load_mapping(COLOR_MAPPING_PATH)
-        style_map = load_mapping(STYLE_MAPPING_PATH)
-        season_map = load_mapping(SEASON_MAPPING_PATH)
-
-        print("모든 AI 모델 및 매핑 정보 로드 완료.")
+        print("✅ 모든 에셋 로드 완료. 서버를 시작합니다.")
         return True
-    except FileNotFoundError as e:
-        print(f"🚨 치명적인 오류: 필수 AI 모델/매핑 파일 로드 실패. 서버를 시작할 수 없습니다. (누락된 파일: {e.filename})")
-        print(f"ROOT_PATH: {ROOT_PATH}")
-        return False
+
     except Exception as e:
-        # 이 오류가 Render 로그에 나타날 것입니다. 
-        print(f"🚨 치명적인 오류: AI 모델 로드 실패 또는 기타 오류. 서버를 시작할 수 없습니다. ({e})")
+        print(f"🚨 Fatal Error: 모델 또는 데이터 로드 실패. {e}")
+        # Render에서 이 오류가 발생하면 서버가 즉시 종료되므로 메모리 부족 문제가 아니라는 것을 알 수 있습니다.
         return False
 
-# --- 3. 핵심 로직 함수 (Notebook 로직 재사용) ---
+# 서버 시작 시 로드 함수 실행
+load_all_assets() 
 
-# 색상 그룹 정의
-color_groups = {
-    'neutral': ['Black', 'White', 'Gray', 'Beige'],
-    'cool': ['Blue', 'Green', 'Purple'],
-    'warm': ['Red', 'Orange', 'Yellow', 'Pink']
-}
-def get_group(color):
-    for group, colors in color_groups.items():
-        if color in colors:
-            return group
-    return 'neutral'
+# --- 5. 이미지 전처리 함수 ---
+def preprocess_query_image(image_bytes):
+    """ 이미지 바이트를 받아 MobileNetV2 입력 형태(224x224)로 전처리 """
+    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    img = img.resize((224, 224))
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    # MobileNetV2 전용 전처리 함수
+    return preprocess_input(img_array)
 
-# Notebook의 가중치
-W_COLOR = 0.40
-W_STYLE = 0.25
-W_SEASON = 0.20
-W_SIM = 0.15
-
-def get_outfit_pair_score(query_attrs, target_idx):
-    """추천 점수 계산 로직 (Notebook의 로직 사용)"""
+# --- 6. AI 속성 예측 함수 ---
+def predict_attributes(processed_img):
+    """ 전처리된 이미지 배열을 기반으로 4가지 속성 예측 및 가장 높은 확률 반환 """
     
-    q = query_attrs # 쿼리 아이템 속성 (업로드 사진)
-    t = df.iloc[target_idx] # 타겟 아이템 속성 (DB 아이템)
-
-    # 1. 색상 점수 (w_color=0.40)
-    q_group = get_group(q['color'])
-    t_group = get_group(t['color'])
+    # NameError 방지를 위해 로드된 모델 객체를 사용하기 전에 다시 한 번 검증
+    if category_model is None:
+        raise ValueError("AI 모델이 로드되지 않았습니다.")
     
-    if q_group == t_group: color_score = 1.0
-    elif q_group == 'neutral' or t_group == 'neutral': color_score = 0.8
-    else: color_score = 0.5
-    
-    # 2. 스타일 점수 (w_style=0.25)
-    style_score = 1.0 if q['style'] == t['style'] else 0.5
-    
-    # 3. 계절 점수 (w_season=0.20)
-    # 이제 q['season']은 실제 모델 예측값임
-    season_score = 1.0 if q['season'] == t['season'] else 0.5
-    
-    # 4. 시각적 유사도 (w_sim=0.15) - 임베딩 추출 후 외부에서 계산됨
-    
-    # 여기서는 속성 점수 합계만 계산
-    attribute_score = (
-        W_COLOR * color_score +
-        W_STYLE * style_score +
-        W_SEASON * season_score
-    )
-    
-    return attribute_score, color_score, style_score, season_score
-
-def extract_embedding(img_pil):
-    """PIL 이미지 객체에서 MobileNetV2 임베딩을 추출합니다."""
-    img = img_pil.resize((224, 224))
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
-    # predict 함수에 verbose=0 추가 (로그 줄이기)
-    embedding = mobile_net.predict(x, verbose=0)
-    return embedding[0]
-
-def predict_attributes(img_pil):
-    """4가지 AI 모델을 사용하여 속성을 예측합니다."""
-    
-    # 이미지 전처리 (224x224, 정규화)
-    img = img_pil.resize((224, 224))
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
+    predictions = {
+        'category': category_model.predict(processed_img)[0],
+        'color': color_model.predict(processed_img)[0],
+        'style': style_model.predict(processed_img)[0],
+        'season': season_model.predict(processed_img)[0]
+    }
     
     results = {}
     confidence = {}
     
-    # 예측 및 변환 (Category)
-    pred_cat = category_model.predict(x, verbose=0)[0]
-    cat_index = np.argmax(pred_cat)
-    results['category'] = category_map[cat_index]
-    confidence['category'] = float(pred_cat[cat_index])
-
-    # 예측 및 변환 (Color)
-    pred_col = color_model.predict(x, verbose=0)[0]
-    col_index = np.argmax(pred_col)
-    results['color'] = color_map[col_index]
-    confidence['color'] = float(pred_col[col_index])
-
-    # 예측 및 변환 (Style)
-    pred_sty = style_model.predict(x, verbose=0)[0]
-    sty_index = np.argmax(pred_sty)
-    results['style'] = style_map[sty_index]
-    confidence['style'] = float(pred_sty[sty_index])
-    
-    # 계절 예측
-    pred_sea = season_model.predict(x, verbose=0)[0]
-    sea_index = np.argmax(pred_sea)
-    results['season'] = season_map[sea_index]
-    confidence['season'] = float(pred_sea[sea_index])
-
+    for key, pred in predictions.items():
+        # 가장 높은 확률을 가진 인덱스 찾기
+        max_index = np.argmax(pred)
+        # 해당 라벨과 신뢰도(확률) 저장
+        results[key] = LABEL_MAPS[key][max_index]
+        confidence[key] = float(pred[max_index])
+        
     return results, confidence
 
-# --- 4. API 엔드포인트 ---
+# --- 7. 코디 추천 핵심 로직 함수 ---
+def recommend_outfits(query_vector, query_attrs, df, k=10):
+    """ 쿼리 벡터와 속성을 기반으로 상위 K개 아이템 추천 """
+    
+    # 1. 유사도 계산 (코사인 유사도)
+    similarities = cosine_similarity(query_vector, all_embeddings)[0]
+    
+    # 2. 메타데이터에 유사도 점수 추가
+    df['similarity_score'] = similarities
+    
+    # 3. 속성 매칭 점수 계산
+    # 카테고리/색상/스타일/계절이 일치하면 추가 점수 부여
+    df['attribute_score'] = 0.0
+    
+    # 각 속성별 일치 점수
+    attr_scores = defaultdict(float)
+
+    # 색상 일치 점수 (0.4점)
+    df.loc[df['color'] == query_attrs['color'], 'attribute_score'] += 0.4
+    df.loc[df['color'] == query_attrs['color'], 'color_score'] = 0.4
+    
+    # 스타일 일치 점수 (0.25점)
+    df.loc[df['style'] == query_attrs['style'], 'attribute_score'] += 0.25
+    df.loc[df['style'] == query_attrs['style'], 'style_score'] = 0.25
+    
+    # 시각적 유사도 점수는 이미 similarity_score에 저장됨 (최대 0.5)
+    
+    # 계절 일치 점수 (0.1점)
+    df.loc[df['season'] == query_attrs['season'], 'attribute_score'] += 0.1
+    df.loc[df['season'] == query_attrs['season'], 'season_score'] = 0.1
+
+    # 최종 점수 계산: 시각적 유사도(Max 0.5) + 속성 일치 점수(Max 0.75)
+    df['total_score'] = df['similarity_score'] + df['attribute_score']
+    
+    # 4. 카테고리 필터링: 입력된 옷과 동일한 카테고리는 제외
+    filtered_df = df[df['category'] != query_attrs['category']]
+
+    # 5. 최종 점수를 기준으로 정렬 및 상위 K개 선택
+    top_k_results = filtered_df.sort_values(by='total_score', ascending=False).head(k)
+    
+    # 결과를 JSON 형태로 변환
+    recommendations_list = []
+    for index, row in top_k_results.iterrows():
+        recommendations_list.append({
+            'filename': row['filename'],
+            'category': row['category'],
+            'color': row['color'],
+            'style': row['style'],
+            'season': row['season'],
+            'total_score': row['total_score'],
+            'details': {
+                'sim_score': row['similarity_score'],
+                # 점수 기록이 없으면 0으로 처리 (일치하지 않았을 경우)
+                'color_score': row.get('color_score', 0.0), 
+                'style_score': row.get('style_score', 0.0),
+                'season_score': row.get('season_score', 0.0)
+            }
+        })
+        
+    return recommendations_list
+
+
+# ==========================================================
+# FLASK API 라우트
+# ==========================================================
 
 @app.route('/recommend', methods=['POST'])
-def recommend_outfit():
+def recommend():
+    """
+    이미지를 받아 AI 분석 및 코디 추천 결과를 반환하는 엔드포인트
+    """
     if 'file' not in request.files:
-        return jsonify({"error": "No file part", "message": "파일을 첨부해주세요."}), 400
+        return jsonify({"error": "No file part"}), 400
     
     file = request.files['file']
     if file.filename == '':
-        return jsonify({"error": "No selected file", "message": "파일을 선택하지 않았습니다."}), 400
-
+        return jsonify({"error": "No selected file"}), 400
+    
     try:
-        # 1. 이미지 로드
-        img_pil = Image.open(io.BytesIO(file.read())).convert('RGB')
+        # 1. 이미지 전처리
+        image_bytes = file.read()
+        processed_img = preprocess_query_image(image_bytes)
         
-        # 2. **자동 속성 예측 (AI 브레인 사용)**
-        query_attrs, confidence = predict_attributes(img_pil)
+        # 2. 특징 추출 (Feature Extraction)
+        query_vector = feature_extractor.predict(processed_img)
         
-        # 3. 쿼리 아이템의 임베딩 추출
-        query_embedding = extract_embedding(img_pil)
+        # 3. 속성 예측 (Attribute Prediction)
+        query_attrs, confidence = predict_attributes(processed_img)
         
-        # 4. 추천 로직 실행
-        query_category = query_attrs['category']
-        
-        # 보완 카테고리 추천 로직
-        
-        # 1순위: 보완 카테고리 설정 (Top이면 Bottom, Bottom이면 Top)
-        complementary_category = 'Bottom' if query_category == 'Top' else 'Top'
-        
-        candidate_indices = [] # 후보 인덱스 리스트 초기화
-        available_categories = df['category'].unique().tolist()
-        final_recommend_category = None
-        guidance_category = ""
-        
-        if complementary_category in available_categories:
-            # 1순위: 보완 카테고리가 DB에 존재하면 해당 카테고리 선택
-            final_recommend_category = complementary_category
-        else:
-            # 2순위: 보완 카테고리가 없는 경우, 쿼리 카테고리를 제외한 다른 카테고리 탐색 (예: Outer)
-            other_categories = [cat for cat in available_categories if cat != query_category]
-            
-            if other_categories:
-                # 쿼리 카테고리가 아닌 다른 카테고리 중 첫 번째를 선택
-                final_recommend_category = other_categories[0]
-            else:
-                # 3순위: DB에 보완할 아이템이 전혀 없는 경우 (Top만 있는 경우 등)
-                guidance_category = f"DB에 {query_category} 외의 보완할 수 있는 다른 카테고리 아이템이 부족하여 추천 목록을 생성하기 어렵습니다."
+        # 4. 코디 추천 실행
+        top_k = recommend_outfits(query_vector, query_attrs, df_metadata.copy())
 
-        if final_recommend_category:
-            candidate_indices = df[df['category'] == final_recommend_category].index.tolist()
-        
-        if not candidate_indices:
-             # 후보 아이템이 없으면 빈 목록 반환 및 경고 처리
-             top_k = []
-             min_confidence = min(confidence.values())
-             guidance = guidance_category or f"AI 분석 정확도가 낮습니다 (최저 {(min_confidence*100):.0f}%). 옷이 잘 보이도록 다른 각도/배경에서 다시 시도해 보세요."
-        
-             return jsonify({
-                 "status": "success",
-                 "query_attributes": query_attrs,
-                 "confidence": confidence,
-                 "guidance": guidance,
-                 "recommendations": top_k
-             })
-             
-        scores = {}
-        
-        # 모든 후보 아이템과 점수 계산
-        for target_idx in candidate_indices:
-            # 속성 기반 점수 (W_COLOR + W_STYLE + W_SEASON)
-            attr_score, c_s, s_s, sea_s = get_outfit_pair_score(query_attrs, target_idx)
-            
-            # 시각적 유사도 점수 (W_SIM)
-            target_embedding = all_embeddings[target_idx].reshape(1, -1)
-            query_emb_reshaped = query_embedding.reshape(1, -1)
-            
-            # 코사인 유사도 계산 후 0.0 ~ 1.0으로 스케일링
-            similarity = cosine_similarity(query_emb_reshaped, target_embedding)[0][0]
-            similarity_score = (similarity + 1) / 2
-            
-            # 최종 점수 합산
-            total_score = attr_score + (W_SIM * similarity_score)
-            
-            # 추천 아이템의 season, style 정보를 scores에 추가
-            scores[target_idx] = {
-                'total_score': float(total_score),
-                'filename': df.iloc[target_idx]['filename'],
-                'category': df.iloc[target_idx]['category'],
-                'color': df.iloc[target_idx]['color'],
-                'season': df.iloc[target_idx]['season'],
-                'style': df.iloc[target_idx]['style'],
-                'details': {
-                    'color_score': float(c_s), 'style_score': float(s_s), 'season_score': float(sea_s), 'sim_score': float(similarity_score)
-                }
-            }
-        
-        # 점수 기준 상위 3개 추출
-        top_k = sorted(scores.values(), key=lambda x: x['total_score'], reverse=True)[:3]
-
-        # 5. 피드백 및 에러 처리
+        # 5. 가이드 메시지 생성
         min_confidence = min(confidence.values())
-        guidance = guidance_category or "" # DB 관련 경고가 있으면 사용
-        
-        if min_confidence < 0.65 and not guidance: # 정확도 65% 미만일 때 경고
+        guidance = ""
+        if min_confidence < 0.75:
             guidance = f"AI 분석 정확도가 낮습니다 (최저 {(min_confidence*100):.0f}%). 옷이 잘 보이도록 다른 각도/배경에서 다시 시도해 보세요."
         
         return jsonify({
@@ -330,18 +242,15 @@ def recommend_outfit():
 
     except Exception as e:
         # Error states
-        # Render 로그에 오류 메시지가 더 자세히 기록될 것입니다.
-        import traceback
-        error_trace = traceback.format_exc()
-        print(f"--- Fatal Error in /recommend ---: {e}") 
-        print(error_trace)
+        print(f"Fatal Error in /recommend ---: {str(e)}")
+        # 🚨 여기서 NameError가 발생한다면, load_all_assets()가 메모리 부족으로 인해 실패했거나, 
+        # 혹은 변수 설정이 잘못된 것입니다.
         return jsonify({
-            "error": f"Internal Server Error: {str(e)}",
-            "message": "서버 내부 처리 중 문제가 발생했습니다. 관리자에게 문의하세요.",
+            "error": f"Internal Server Error: {str(e)}", 
+            "message": "서버 내부 처리 중 문제가 발생했습니다. (모델 로드 실패 가능성)",
             "error_type": "MODEL_INFERENCE_FAILED"
         }), 500
 
-# 이미지 서빙 엔드포인트: 추천 결과 이미지를 프론트엔드에 전달합니다.
 @app.route('/image/<filename>')
 def serve_image(filename):
     """
@@ -357,13 +266,11 @@ def serve_image(filename):
 
 @app.route('/')
 def home():
-    # render_template을 사용하려면 index.html을 'templates' 폴더에 넣어야 합니다.
-    # 가장 간단하게는, 루트에 있는 index.html을 바로 보냅니다.
-    return send_file('index.html')
+    from flask import send_file
+    # index.html 파일을 클라이언트에게 전송
+    return send_file(os.path.join(ROOT_PATH, 'index.html'))
 
 if __name__ == '__main__':
-    # 서버 시작 전에 모든 AI 모델과 데이터를 로드
-    if load_all_assets():
-        print("✅ 모든 에셋 로드 완료. 서버를 시작합니다.")
-        # 배포 시에는 host='0.0.0.0'이 필수입니다.
-        app.run(host='0.0.0.0', port=5000) # debug=True는 배포 시에는 제거합니다.
+    # Render 환경에서는 이 부분이 실행되지 않습니다. (gunicorn 등이 실행)
+    # 로컬 테스트 용도로만 사용됩니다.
+    app.run(host='0.0.0.0', port=5000)
